@@ -1,0 +1,6 @@
+PySide6>=6.7
+requests>=2.31
+winrt-runtime>=2.0
+winrt-Windows.Networking.Connectivity>=2.0
+winrt-Windows.Foundation>=2.0
+winrt-Windows.Foundation.Collections>=2.0
