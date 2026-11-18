@@ -112,7 +112,7 @@ QComboBox QAbstractItemView {{ background: {C.PANEL}; selection-background-color
 QProgressBar {{ background: {C.INPUT}; border: none; border-radius: 4px; height: 8px; text-align: center; }}
 QProgressBar::chunk {{ background: {C.ACCENT}; border-radius: 4px; }}
 QTabWidget::pane {{ border: none; }}
-QTabBar::tab {{ background: transparent; color: {C.MUTED}; padding: 8px 16px; border-bottom: 2px solid transparent; }}
+QTabBar::tab {{ background: transparent; color: {C.MUTED}; padding: 8px 12px; border-bottom: 2px solid transparent; }}
 QTabBar::tab:selected {{ color: {C.TEXT}; border-bottom-color: {C.ACCENT}; }}
 QTableWidget {{ background: {C.PANEL}; border: 1px solid {C.BORDER}; border-radius: 8px; gridline-color: {C.BORDER}; }}
 QHeaderView {{ background: {C.PANEL}; }}
@@ -396,6 +396,9 @@ trigger anti-cheat (VAC, Vanguard, EAC, ...).</li>
 server locations. Nothing about you is sent.</li>
 <li><b>Ping (ICMP echo)</b> to the game relay you test - the same kind of
 packets Windows' <i>ping</i> command sends.</li>
+<li><b>Live monitor:</b> pings only the server, website or IP you choose, 1-4
+times a second, until you stop it. A website name is looked up through your
+normal DNS, like a browser does.</li>
 <li><b>Only if you turn on the download/upload test:</b> dummy data to and from
 Cloudflare's speed test (speed.cloudflare.com). On a metered connection the
 app asks for your approval first and can cap the data used.</li>
@@ -565,6 +568,7 @@ def _heading(text: str) -> QLabel:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.base_title = WINDOW_TITLE  # the taskbar mode prefixes the live ping
         self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(720, 480)
         self._fit_to_screen()
@@ -642,6 +646,9 @@ class MainWindow(QMainWindow):
         QApplication.instance().setStyleSheet(make_style())
         self.title.setText(f"net<span style='color:{C.ACCENT}'>stab</span>")
         self.plot.update()  # the chart reads C when it paints
+        self.monitor_tab.apply_theme()
+        self.mini.update()
+        self.tray.refresh()
         self.legend.setText(
             f"<span style='color:{C.LINE}'>━</span> each packet &nbsp;&nbsp;"
             f"<span style='color:{C.ACCENT}'>━</span> 1 s average &nbsp;&nbsp;"
@@ -675,6 +682,7 @@ class MainWindow(QMainWindow):
             row.addWidget(badge, 0, Qt.AlignVCenter)
         row.addStretch(1)
         self.theme_combo = QComboBox()
+        self.theme_combo.setAccessibleName("Theme")
         for key, label in THEME_CHOICES:
             self.theme_combo.addItem(label, key)
         self.theme_combo.setToolTip("Theme (System follows your Windows setting)")
@@ -738,11 +746,13 @@ class MainWindow(QMainWindow):
         for i, rb in enumerate((self.rb_auto, self.rb_max, self.rb_manual)):
             self.server_mode.addButton(rb, i)
         self.max_ping = QSpinBox()
+        self.max_ping.setAccessibleName("Max ping limit")
         self.max_ping.setRange(25, 350)
         self.max_ping.setSingleStep(5)
         self.max_ping.setSuffix(" ms")
         self.max_ping.setValue(90)
         self.server_combo = QComboBox()
+        self.server_combo.setAccessibleName("Server")
         self.server_combo.setPlaceholderText("Scan to list servers")
         self.btn_scan = QPushButton("Scan servers")
         self.btn_scan.clicked.connect(lambda: self._scan(start_after=False))
@@ -787,11 +797,25 @@ class MainWindow(QMainWindow):
 
     def _build_main(self) -> QWidget:
         self.tabs = QTabWidget()
+        # On narrow windows, shorten tab names instead of hiding tabs behind arrows.
+        self.tabs.tabBar().setUsesScrollButtons(False)
+        self.tabs.tabBar().setElideMode(Qt.ElideRight)
         # Each page scrolls when the window is smaller than it (small screens,
         # 125-150% display scaling) instead of forcing the window to grow.
         self.tabs.addTab(_scrollable(self._build_live_tab()), "Stability test")
         self.tabs.addTab(_scrollable(self._build_detail_tab()), "Detailed test")
         self.tabs.addTab(_scrollable(self._build_compare_tab()), "Compare networks")
+        # Live monitor: imported here because monitor_ui builds on this module.
+        from .monitor_ui import (MiniMonitor, MonitorController, MonitorTab,
+                                 TaskbarController, TrayController)
+        self.monitor_ctl = MonitorController(self)
+        self.monitor_tab = MonitorTab(self.monitor_ctl, self)
+        self.tabs.addTab(_scrollable(self.monitor_tab), "Live monitor")
+        self.mini = MiniMonitor(self.monitor_ctl, self)
+        self.tray = TrayController(self.monitor_ctl, self)
+        self.taskbar = TaskbarController(self.monitor_ctl, self, QIcon(str(ICON_PATH)))
+        self._quitting = False
+        self._tray_hint_shown = False
         return self.tabs
 
     def _build_live_tab(self) -> QWidget:
@@ -867,8 +891,8 @@ class MainWindow(QMainWindow):
 
         tiles = ResponsiveRow(min_item_width=150)
         self.d_idle = Tile("Idle ping")
-        self.d_down = Tile("Ping while downloading")
-        self.d_up = Tile("Ping while uploading")
+        self.d_down = Tile("Ping + download")
+        self.d_up = Tile("Ping + upload")
         self.d_bloat = Tile("Bufferbloat")
         self.d_mtu = Tile("Path MTU")
         for t in (self.d_idle, self.d_down, self.d_up, self.d_bloat, self.d_mtu):
@@ -984,6 +1008,7 @@ class MainWindow(QMainWindow):
             f"{self.max_ping.value()} ms. Best: {best.name if best else '-'} "
             f"({_fmt(best.ping_ms) if best else '-'}).")
         self.status.setText("Servers scanned.")
+        self.monitor_tab.servers_scanned()
         if self._start_after_scan:
             self._start_after_scan = False
             self._start_test()
@@ -1044,6 +1069,7 @@ class MainWindow(QMainWindow):
                             f"via {srv.best_relay}")
         self._set_running(True)
         self.tabs.setCurrentIndex(0)
+        self.monitor_ctl.pause_for_test()  # the test needs the line to itself
         self.test.start()
         self.timer.start()
 
@@ -1108,6 +1134,7 @@ class MainWindow(QMainWindow):
     def _finish_test(self) -> None:
         t = self.test
         self._set_running(False)
+        self.monitor_ctl.resume_after_test()
         self.summary = s = t.summary()
         if s.sent == 0:
             self.status.setText("Test stopped.")
@@ -1378,6 +1405,7 @@ class MainWindow(QMainWindow):
         srv = self.server
         self.detail = DetailedTest(srv.best_relay, opts)
         self.detail_opts = opts
+        self.monitor_ctl.pause_for_test()
         self.detail_result = None
         self.hop_table.setRowCount(0)
         for t in (self.d_idle, self.d_down, self.d_up, self.d_bloat, self.d_mtu):
@@ -1465,6 +1493,7 @@ class MainWindow(QMainWindow):
     def _on_detail_done(self, r: DetailedResult) -> None:
         cancelled = self.detail.cancelled
         self.detail = None
+        self.monitor_ctl.resume_after_test()
         self.detail_result = r
         self.btn_d_stop.setVisible(False)
         self.btn_detail.setEnabled(True)
@@ -1513,12 +1542,62 @@ class MainWindow(QMainWindow):
             json.dump(report, f, indent=2, default=lambda o: None)
         self.status.setText(f"Report saved to {path}")
 
+    # ------------------------------------------------- live monitor / background --
+    def mini_visible(self) -> bool:
+        return self.mini.isVisible()
+
+    def toggle_mini(self) -> None:
+        self.mini.setVisible(not self.mini.isVisible())
+        self.monitor_tab.btn_mini.setText("Hide mini window" if self.mini.isVisible()
+                                          else "Mini window")
+        self.tray.sync()
+
+    def show_from_background(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.tray.sync()
+
+    def start_monitor_from_saved(self) -> None:
+        self.monitor_ctl.start(self.monitor_tab.spec())
+
+    def quit_app(self) -> None:
+        self._quitting = True
+        self.close()
+
     def closeEvent(self, e) -> None:
+        mode = self.monitor_tab.close_mode.currentData()
+        keeping = self.monitor_ctl.running and not self._quitting
+        if keeping and mode == "taskbar":
+            # Stay on the taskbar, where the button keeps showing the live ping.
+            e.ignore()
+            self.showMinimized()
+            return
+        if keeping and mode == "tray" and self.tray.tray.isSystemTrayAvailable():
+            # Keep monitoring in the background; the tray icon brings it back.
+            e.ignore()
+            self.hide()
+            self.tray.sync()
+            if not self._tray_hint_shown:
+                self._tray_hint_shown = True
+                self.tray.message("netstab keeps monitoring in the background. Click "
+                                  "the tray icon to open it, or right-click it to "
+                                  "quit. Can't see it? Windows may hide new icons "
+                                  "under the ^ arrow: drag it onto the taskbar to "
+                                  "always see your ping.")
+            return
         if self.test:
             self.test.stop()
         if self.detail:
             self.detail.stop()
+        self.monitor_ctl.stop()
+        self.taskbar.restore()
+        self.mini.close()
+        self.tray.tray.hide()
         super().closeEvent(e)
+        app = QApplication.instance()
+        if app is not None and not app.quitOnLastWindowClosed():
+            app.quit()
 
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "netstab.ico"
@@ -1541,12 +1620,47 @@ def claim_single_instance() -> bool:
     return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
 
 
+_SHOW_EVENT = "Local\netstab-show-window"
+
+
 def focus_running_instance() -> None:
-    user32 = ctypes.windll.user32
+    """Ask the running copy to show its window (it may be hidden in the tray)."""
+    k32 = ctypes.windll.kernel32
+    k32.OpenEventW.restype = ctypes.c_void_p
+    ev = k32.OpenEventW(0x0002, False, _SHOW_EVENT)  # EVENT_MODIFY_STATE
+    if ev:
+        k32.SetEvent(ctypes.c_void_p(ev))
+        k32.CloseHandle(ctypes.c_void_p(ev))
+        return
+    user32 = ctypes.windll.user32  # older copy without the event: just focus it
     hwnd = user32.FindWindowW(None, WINDOW_TITLE)
     if hwnd:
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE, in case it's minimised
         user32.SetForegroundWindow(hwnd)
+
+
+class _ShowRequests(QObject):
+    """Waits for a second launch to ask for the window, in a background thread."""
+
+    requested = Signal()
+
+    def start(self) -> None:
+        k32 = ctypes.windll.kernel32
+        k32.CreateEventW.restype = ctypes.c_void_p
+        k32.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_bool,
+                                     ctypes.c_wchar_p]
+        self.ev = k32.CreateEventW(None, False, False, _SHOW_EVENT)  # auto-reset
+        if not self.ev:
+            return
+
+        def wait():
+            while True:
+                if k32.WaitForSingleObject(ctypes.c_void_p(self.ev), 0xFFFFFFFF) == 0:
+                    self.requested.emit()
+                else:
+                    return
+
+        threading.Thread(target=wait, daemon=True, name="netstab-show-requests").start()
 
 
 def _install_crash_reporting() -> None:
@@ -1592,15 +1706,32 @@ def main() -> int:
         pass
     app = QApplication(sys.argv)
     app.setApplicationName("netstab")
+    # The live monitor can keep running in the tray with no window open;
+    # MainWindow.closeEvent quits explicitly when it should.
+    app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setStyleSheet(make_style())
     splash.update("Opening window...")
     w = MainWindow()
-    w.show()
+    show_requests = _ShowRequests()
+    show_requests.requested.connect(w.show_from_background)
+    show_requests.start()
+    s = settings.load()
+    minimized = "--minimized" in sys.argv[1:] or s.get("start_minimized", False)
+    if minimized:
+        w.showMinimized()
+    else:
+        w.show()
     app.processEvents()  # paint the window before the splash goes away
     splash.close()
-    w.raise_()
-    w.activateWindow()
+    if s.get("monitor_autostart", False):
+        w.start_monitor_from_saved()
+    if minimized and w.monitor_tab.close_mode.currentData() == "tray":
+        w.hide()  # straight into the tray; its icon brings the window back
+        w.tray.sync()
+    elif not minimized:
+        w.raise_()
+        w.activateWindow()
     return app.exec()
 
 

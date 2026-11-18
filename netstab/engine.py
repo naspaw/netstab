@@ -47,8 +47,13 @@ class LoadTest:
         return self._stop.is_set()
 
     def _one(self, i: int) -> None:
-        r = icmp.echo(self.ip, self.payload, self.timeout_ms)
-        self.rtts[i] = r.rtt_ms if r.ok else None
+        try:
+            r = icmp.echo(self.ip, self.payload, self.timeout_ms)
+            self.rtts[i] = r.rtt_ms if r.ok else None
+        except OSError:
+            # Count it as lost: left PENDING, it would freeze every result
+            # after it (snapshot() stops at the first unfinished packet).
+            self.rtts[i] = None
 
     def _run(self) -> None:
         # Enough workers to cover every packet that can be in flight at once.

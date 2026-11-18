@@ -196,6 +196,41 @@ def main() -> int:
     shot("metered-approval", dlg)
     dlg.close()
 
+    # Live monitor fed with a sample 5-minute trace to a Valve relay.
+    from netstab import monitor as mon_mod
+    rnd = random.Random(11)
+    hist = []
+    for i in range(600):
+        t = i * 0.5
+        v = 37.5 + abs(rnd.gauss(0, 1.8)) + (40 * rnd.random() if 200 <= t < 206 else 0)
+        hist.append((t, None if i in (412, 413) else v))
+
+    class SampleMonitor:
+        ip, interval, paused = RELAY, 0.5, False
+
+        def history(self, seconds=None):
+            if seconds is None:
+                return hist
+            return [h for h in hist if h[0] >= hist[-1][0] - seconds]
+
+        def stats(self, seconds=60):
+            return mon_mod.summarize(self.history(seconds))
+
+        def stop(self):
+            pass
+
+    ctl = w.monitor_ctl
+    ctl.mon, ctl.label = SampleMonitor(), "Counter-Strike 2 · Frankfurt (Germany)"
+    ctl.changed.emit()
+    w.tabs.setCurrentIndex(3)
+    w.monitor_tab.win_group.buttons()[1].click()  # 5 min
+    w.toggle_mini()
+    shot("live-monitor-dark", w)
+    shot("mini-window", w.mini)
+    w.toggle_mini()
+    ctl.mon = None
+    ctl.changed.emit()
+
     about = gui.AboutDialog(w)
     about.show()
     shot("privacy", about)

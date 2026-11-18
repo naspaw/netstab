@@ -1,12 +1,12 @@
 # netstab
 
 > [!NOTE]
-> **Version 0.1.0** has been tested by its author on Windows 11, on top of
-> automated tests: unit tests, end-to-end tests that drive the real app on a
-> real connection, and a self-test of the built `.exe`. It hasn't been tried on
-> Windows 10 or on many other PCs yet, so please report problems in
-> [Issues](../../issues). The 0.1.0 app still shows a **PREVIEW** badge; it goes
-> away in the next version.
+> **Version 0.2.0** (with the new *Live monitor*) has been tested by its author
+> on Windows 11, on top of automated tests: unit tests, end-to-end tests that
+> drive the real app on a real connection, and a self-test of the built `.exe`.
+> It hasn't been tried on Windows 10 or on many other PCs yet, so please report
+> problems in [Issues](../../issues). The app still shows a **PREVIEW** badge
+> while it's this new.
 
 **Test your connection before you queue.** netstab checks whether your network
 is ready for an online game, not with a one-off speed test but by sending a
@@ -23,6 +23,12 @@ Battlefield 6, GTA Online, League of Legends, Delta Force and Rust are planned.
 
 **Detailed test:** route with per-hop latency, path MTU, and how much ping rises while the line is busy.
 ![Detailed test](docs/screenshots/detailed-dark.png)
+
+**Live monitor:** keeps pinging a game server, website or IP while you play, with a rolling chart.
+![Live monitor](docs/screenshots/live-monitor-dark.png)
+
+**Mini window:** stays on top of other windows; drag it anywhere, right-click for options.
+![Mini window](docs/screenshots/mini-window.png)
 
 **Compare networks:** each test is saved with its network; the winner on each line is marked.
 ![Compare networks](docs/screenshots/compare-dark.png)
@@ -91,8 +97,42 @@ You get:
   Wi-Fi name, for example). Switch to a cable, another Wi-Fi or a phone
   hotspot, test again, and the *Compare networks* tab shows them side by side,
   marks the winner on each metric and tells you which network is better.
+- **Live monitor.** A light, continuous ping (1, 2 or 4 a second) to a CS2 or
+  Steam server, or to any website or IP such as `google.com`, `1.1.1.1` or
+  your own router. It shows a rolling chart of the last 1, 5 or 10 minutes,
+  and can run three ways:
+  - in the **Live monitor** tab;
+  - in a small **mini window** that stays on top of other windows (drag it,
+    right-click to make it see-through). Over a game it shows in borderless or
+    windowed mode, not exclusive fullscreen;
+  - on the **taskbar**: netstab's taskbar button, next to your pinned apps,
+    shows the current ping as its icon (green, yellow or red). Closing the
+    window just minimises it there, so it keeps monitoring;
+  - or in the **tray**, if you choose that instead: closing hides the window and
+    the tray icon shows the ping. Click it to come back, or right-click it to
+    quit. Windows may hide new tray icons under the ^ arrow; drag it onto the
+    taskbar to always see it.
+
+  It can alert you when ping stays above your limit or the connection drops,
+  and it pauses by itself while a stability or detailed test runs.
+
+  It can also **start monitoring by itself** and **start minimised** when
+  netstab opens (both options are on the Live monitor tab). To start minimised
+  just from one shortcut, add `--minimized` to it:
+  `netstab.exe --minimized`.
+
+> [!IMPORTANT]
+> **Performance in version 0.2.0.** The Live monitor is new. On the PC it was
+> built on it used very little: at most **0.4% CPU** of the whole PC and about
+> **170–195 MB of RAM** while monitoring at 4 pings a second, and about
+> **2 MB of network data per hour** (0.5 MB at 1 ping a second). That's one PC
+> only, though. If you notice anything slower while netstab runs, such as
+> stutter in a game, higher ping, or the PC working harder, please
+> [let us know](../../issues). Mention your Windows version and which mode you
+> used (tab, mini window, taskbar or tray). Lowering the rate to 1 ping a
+> second or stopping the monitor removes any effect.
 - **Export report** (JSON) to share or to send to your ISP.
-- Dark, light or follow-Windows **theme**.
+- Dark, light or system **theme**.
 
 ## Privacy and safety
 
@@ -189,6 +229,9 @@ netstab/
   detailed.py  route/per-hop, MTU, bufferbloat and speed
   metered.py   Windows metered-connection check
   compare.py   test history and network comparison
+  monitor.py   live monitor: continuous ping and alerts
+  monitor_ui.py  live monitor tab, mini window, tray and taskbar
+  taskbar.py   colour strip on the taskbar button (Windows shell API)
   gui.py       PySide6 desktop UI
   cli.py       command-line runner
   selftest.py  checks every feature from inside a built exe

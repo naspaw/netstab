@@ -108,6 +108,25 @@ def run(out_dir: str, no_ping: bool = False) -> int:
         compare.compare([run_, run_])
         return v.headline
 
+    def live_monitor():
+        from PySide6.QtWidgets import QApplication
+
+        from . import monitor
+        from .monitor_ui import tray_icon_for
+        QApplication.instance() or QApplication(sys.argv[:1])
+        icon = tray_icon_for(42.0, "live")  # tray icon drawing works when frozen
+        assert not icon.isNull(), "tray icon could not be drawn"
+        ip = monitor.resolve("google.com")  # DNS lookup of a typed website
+        if no_ping:
+            return f"google.com -> {ip}; pinging skipped (--no-ping)"
+        m = monitor.PingMonitor(ip, interval=0.25)
+        m.start()
+        time.sleep(2.2)
+        m.stop()
+        s = m.stats()
+        assert s.count and s.avg_ms is not None, "no replies from google.com"
+        return f"google.com ({ip}): {s.count} pings, avg {s.avg_ms:.0f} ms"
+
     def window():
         from PySide6.QtWidgets import QApplication
 
@@ -124,7 +143,7 @@ def run(out_dir: str, no_ping: bool = False) -> int:
         for _ in range(20):
             app.processEvents()
             time.sleep(0.05)
-        for i, name in enumerate(("stability", "detailed", "compare")):
+        for i, name in enumerate(("stability", "detailed", "compare", "monitor")):
             w.tabs.setCurrentIndex(i)
             app.processEvents()
             w.grab().save(str(out / f"selftest_{name}.png"))
@@ -142,7 +161,8 @@ def run(out_dir: str, no_ping: bool = False) -> int:
                      ("64 Hz load test", load_test),
                      ("route + MTU", route_and_mtu),
                      ("HTTPS to speed test", https_speedtest_endpoint),
-                     ("advice + compare", advice_and_compare), ("UI", window)]:
+                     ("advice + compare", advice_and_compare),
+                     ("live monitor", live_monitor), ("UI", window)]:
         if no_ping and name in ("64 Hz load test", "route + MTU"):
             results.append({"check": name, "ok": True, "info": "skipped: --no-ping"})
             continue

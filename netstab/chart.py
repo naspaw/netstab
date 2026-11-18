@@ -83,6 +83,7 @@ class LatencyChart(QWidget):
         LINE, ACCENT, BAD), so a theme change only needs update()."""
         super().__init__(parent)
         self.c = palette
+        self.rolling = False
         self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.reset(60)
@@ -99,6 +100,12 @@ class LatencyChart(QWidget):
         self._mapped: list[list[QPointF]] = []
         self._map_key = None
         self.update()
+
+    def set_rolling(self, window_s: float) -> None:
+        """Show the last `window_s` seconds; x values are then 0..window_s and
+        the axis reads "-60 ... now". Data shifts every frame, so nothing is cached."""
+        self.rolling = True
+        self.reset(window_s)
 
     def set_data(self, xs, ys, avg, loss_x) -> None:
         self.xs, self.ys, self.avg, self.loss_x = xs, ys, avg, loss_x
@@ -125,6 +132,12 @@ class LatencyChart(QWidget):
 
         def label(v: float) -> str:
             return f"{v:.0f}" if float(v).is_integer() else f"{v:g}"
+
+        def x_label(v: float) -> str:
+            if not self.rolling:
+                return label(v)
+            ago = self.x_max - v
+            return "now" if ago < 1e-9 else f"-{label(ago)}"
 
         left = max(fm.horizontalAdvance(label(t)) for t in y_ticks) + 14
         bottom_pad = fm.height() * 2 + 10
@@ -158,9 +171,10 @@ class LatencyChart(QWidget):
             p.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 4))
             p.setPen(muted)
             p.drawText(QRectF(x - 30, plot.bottom() + 6, 60, fm.height()),
-                       Qt.AlignHCenter | Qt.AlignTop, label(t))
+                       Qt.AlignHCenter | Qt.AlignTop, x_label(t))
         p.drawText(QRectF(plot.left(), plot.bottom() + fm.height() + 8, plot.width(),
-                          fm.height()), Qt.AlignHCenter | Qt.AlignTop, "seconds")
+                          fm.height()), Qt.AlignHCenter | Qt.AlignTop,
+                   "seconds ago" if self.rolling else "seconds")
 
         p.setClipRect(plot.adjusted(-1, -8, 1, 1))
         if self.ys:
@@ -201,6 +215,9 @@ class LatencyChart(QWidget):
         cols = max(1, int(plot.width()))
         if len(self.xs) <= cols * 2:  # few packets: draw them all
             return QPolygonF([QPointF(X(x), Y(y)) for x, y in zip(self.xs, self.ys)])
+        if self.rolling:  # values shift every frame, so bin them afresh
+            return QPolygonF([QPointF(X(x), Y(y)) for x, y in
+                              decimate(self.xs, self.ys, self.x_max, cols)])
         if (self._cols is None or self._cols.cols != cols
                 or self._cols.done > len(self.xs)):
             self._cols = ColumnMinMax(cols, self.x_max)

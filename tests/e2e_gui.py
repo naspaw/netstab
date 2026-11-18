@@ -314,6 +314,64 @@ def compare_rename_delete():
           and len(compare.load()) == n - 1 and rid not in w.compare_ids)
 
 
+@step
+def live_monitor_start():
+    w.tabs.setCurrentIndex(3)
+    t = w.monitor_tab
+    t.rb_host.setChecked(True)
+    t.host.setEditText("1.1.1.1")
+    t._start_or_stop()
+    state["mon_t0"] = time.time()
+
+
+@step
+def live_monitor_check():
+    ctl = w.monitor_ctl
+    if not ctl.running or time.time() - state["mon_t0"] < 5:
+        return False
+    st = ctl.mon.stats(60)
+    check("live monitor pings a typed IP", st.count >= 5 and st.avg_ms is not None,
+          f"{st.count} pings, avg {st.avg_ms}")
+    w.toggle_mini()
+    QApplication.processEvents()
+    check("mini window opens on top", w.mini.isVisible()
+          and bool(w.mini.windowFlags() & Qt.WindowStaysOnTopHint))
+    shot("11_live_monitor")
+    shot("12_mini_window", w.mini)
+    menu = w.mini.build_menu()
+    names = [a.text() for a in menu.actions()]
+    check("mini menu has open/pause/stop/see-through/close",
+          {"Open netstab", "Pause", "Stop monitoring", "See-through",
+           "Close mini window"} <= set(names), ", ".join(names))
+    see = next(a.menu() for a in menu.actions() if a.text() == "See-through")
+    next(a for a in see.actions() if a.text() == "25%").trigger()
+    check("see-through changes the mini window", abs(w.mini.windowOpacity() - 0.75) < 0.02
+          and abs(settings.load().get("mini_opacity", 0) - 0.75) < 0.02)
+    w.tray._build_menu()
+    tnames = [a.text() for a in w.tray.menu.actions() if a.text()]
+    check("tray menu has open/mini/pause/stop/quit",
+          {"Open netstab", "Hide mini window", "Pause", "Stop monitoring",
+           "Quit netstab"} <= set(tnames), ", ".join(tnames))
+    t = w.monitor_tab
+    w.taskbar.refresh()
+    check("taskbar button shows the live ping", w.windowTitle()[:1].isdigit()
+          and w.taskbar._showing, w.windowTitle()[:40])
+    t.close_mode.setCurrentIndex(t.close_mode.findData("taskbar"))
+    w.close()
+    QApplication.processEvents()
+    check("close in taskbar mode minimises and keeps monitoring",
+          w.isMinimized() and ctl.running)
+    w.show_from_background()
+    QApplication.processEvents()
+    ctl.pause_for_test()
+    check("monitor pauses for a test", ctl.mon.paused)
+    ctl.resume_after_test()
+    w.toggle_mini()
+    ctl.stop()
+    check("monitor stops", not ctl.running and not w.mini.isVisible())
+    check("taskbar button back to normal", w.windowTitle() == w.base_title)
+
+
 def finish():
     ok = all(r[1] for r in results)
     print(f"\n{sum(r[1] for r in results)}/{len(results)} checks passed. "

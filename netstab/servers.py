@@ -75,7 +75,10 @@ def list_servers(profile: GameProfile) -> list[Server]:
 def _probe(ip: str, count: int = 3) -> float | None:
     rtts = []
     for _ in range(count):
-        r = icmp.echo(ip, 32, timeout_ms=800)
+        try:
+            r = icmp.echo(ip, 32, timeout_ms=800)
+        except OSError:
+            continue  # one failing relay must not abort the whole scan
         if r.ok:
             rtts.append(r.rtt_ms)
     return statistics.median(rtts) if rtts else None
